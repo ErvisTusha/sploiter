@@ -1,0 +1,197 @@
+#!/bin/bash
+# Colors
+COLOR_OFF='\033[0m' # Text Reset
+RED='\033[0;31m'    # Red
+GREEN='\033[0;32m'  # Green
+NC=$'\e[0m'         # No Color
+BOLD=$(tput bold)
+
+#fix long lines terminal output
+export PAGER=less
+
+exploitdb_path="/usr/share/et/files_exploits.csv"
+
+echo -e "\nGithub Repository https://github.com/ErvisTusha/sploiter"
+echo -e "Creator: ${RED}${BOLD} Ervis Tusha ${NC}  Contact : ${RED}${BOLD}https://twitter.com/ET ${NC} \n"
+
+#if files_exploits.csv is more than 7 days old show message need to be update
+if [ -f $exploitdb_path ]; then
+    if [ $(find $exploitdb_path -mtime +7) ]; then
+        echo "Exploit Database is more than 7 days old, please update it"
+        echo "Run: sploiter --update"
+    fi
+else
+    echo "Exploit Database is missing, please update it"
+    echo "Run: sploiter --update"
+    echo "Run: sploiter -u"
+fi
+
+
+#update function
+#download new csv and replace the old one
+update() {
+    #check if user has root permission if not exit with error
+    if [ $(id -u) != 0 ]; then
+        echo "You need to be root to update the Exploit Database"
+        exit 1
+    fi
+
+    mkdir -p /usr/share/et/
+    wget -q https://github.com/offensive-security/exploitdb/raw/master/files_exploits.csv -O $exploitdb_path.tmp
+    if [ $? -ne 0 ]; then
+        rm $exploitdb_path.tmp
+        echo "Error downloading Exploit Database"
+        exit 1
+    else
+        mv $exploitdb_path.tmp $exploitdb_path
+        echo "Exploit Database is updated"
+    fi
+
+}
+
+#search function
+# replace spaces with .*
+# grep -iE 'Joomla.*2' files_exploits.csv
+
+search() {
+    if [ -z "$1" ]; then
+        echo "Usage: -h or --help for more  "
+        echo "To Download exploit"
+        echo "sploiter <ID>"
+        echo "To search for exploits:"
+        echo "sploiter <search term>"
+        exit 1
+    fi
+
+    #check if files_exploits.csv is missing
+    if [ ! -f $exploitdb_path ]; then
+        echo "Exploit Database is missing, please update it"
+        echo "Run: sploiter --update"
+        exit 1
+    fi
+
+    #check if search term is more than 2 characters
+    if [ ${#1} -le 2 ]; then
+        echo "Search term is less than 3 characters"
+        exit 1
+    fi
+
+    #replace spaces with .*
+    searchterm=$(echo $1 | sed 's/ /.*/g')
+
+    #filter all rows containing seachterm in files_exploits.csv and print column 1,2 only file extension and 3
+    all_exploits=$(awk -F "," '{print $1"\t|"," "$2"\t\t|",""$3}' $exploitdb_path | sed 's/ [^.]*\./ /' | grep -iE --color=always "$searchterm")
+
+    #if all_exploits is empty print message
+    if [ -z "$all_exploits" ]; then
+        echo "No exploits found"
+    else
+        echo -e "  ID \t| EXTENSION \t|\t Title"
+        echo "----------------------------------------------------------------------------------------------------"
+        echo "$all_exploits"
+    fi
+}
+
+#search function
+# replace spaces with .*
+# grep -iE 'Joomla.*2'
+
+#download functin
+#download exploit from github , if github fails try exploit-db
+download() {
+
+    #create vaiable exploit grep from files_exploit row where $1
+    #is the exploit name
+    exploit=$(grep "^$1," $exploitdb_path)
+    #if exploit is empty print message
+    if [ -z "$exploit" ]; then
+        echo "No results found."
+    else
+        #if arg -o or --output is used output_path is set to next arg
+        #if not use default path
+        if [ "$2" == "-o" ] || [ "$2" == "--output" ]; then
+            #if $3 is empty exit with error else set output_path to $3
+            if [ -z "$3" ]; then
+                echo "No output path specified."
+                exit 1
+            else
+                output_path=$3
+            fi
+        else
+            output_path=$1
+        fi
+
+        #split row by delimiter and get the exploit url
+        url=$(echo "$exploit" | awk -F ',' '{print $2}')
+        title=$(echo "$exploit" | awk -F ',' '{print $3}')
+        #get extension from url
+        extension=$(echo "$url" | awk -F '.' '{print $NF}')
+        if [ -z "$url" ]; then
+            echo "No results found."
+        else
+            echo "Downloading $title."
+            wget -q https://github.com/offensive-security/exploitdb/raw/master/$url -O $output_path.$extension
+            #if wget fails try exploit-db
+            if [ $? -ne 0 ]; then
+                echo "Failed to download exploit from GitHub"
+                wget -q https://www.exploit-db.com/download/$1 -O $output_path.$extension
+
+                if [ $? -ne 0 ]; then
+                    echo "Failed to download exploit from exploit-db.com"
+                    exit 1
+                fi
+            fi
+            echo "Download is finished."
+        fi
+
+    fi
+
+}
+
+#arg -h is for help
+#arg -u --update is for update
+#arg -s --search or search is for search
+#arg -d --download is for download
+#arg -o --output is for output
+
+help() {
+    echo "Usage: sploiter [OPTION] [ARGUMENT]"
+    echo "Search and download exploits from Exploit-DB"
+    echo "  -h, --help                 Show this help"
+    echo "  -u, --update               Update Exploit-DB"
+    echo "  -s, --search               Search for exploits"
+    echo "  -d, --download             Download exploit"
+    echo "  -o, --output               Output path"
+}
+
+#if arg -h is given show help
+if [ "$1" == "-h" ] || [ "$1" == "--help" ] || [ "$1" == "help" ]; then
+    help
+    exit 0
+fi
+
+#if $1 is valid number download exploit
+if [ "$1" -eq "$1" ] 2>/dev/null; then
+    download $1
+    exit 0
+fi
+
+#if arg -u is given update
+if [ "$1" == "-u" ] || [ "$1" == "--update" ]; then
+    update
+    exit 0
+fi
+#if arg -s is given search
+if [ "$1" == "-s" ] || [ "$1" == "--search" ]; then
+    #pass all args except first one to search function
+    search "${*:2}"
+
+    exit 0
+fi
+#if arg -d is given download
+if [ "$1" == "-d" ] || [ "$1" == "--download" ]; then
+    download $2 $3 $4
+    exit 0
+fi
+
+search "${*:1}"
